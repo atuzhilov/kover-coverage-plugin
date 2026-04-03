@@ -8,7 +8,8 @@ Designed to be applied via a Gradle **init script** — no changes to the consum
 | Task | Description |
 |------|-------------|
 | `koverModuleCoverage_<module>` | Parses the Kover XML report for a single module and writes `Line / Branch coverage %` to a `.txt` file |
-| `koverAllModulesCoverageReport` | Aggregates all per-module `.txt` files into a single `coverageAllModulesSummary.txt` |
+| `koverAllModuleCoverage` | Lifecycle task — depends on all per-module tasks and triggers the summary task when done |
+| `koverAllModulesCoverageReport` | Aggregates all per-module `.txt` files into a single `coverageAllModulesSummary.txt` sorted table |
 
 ## Requirements
 
@@ -27,7 +28,7 @@ initscript {
         mavenCentral()
     }
     dependencies {
-        classpath("com.github.YOUR_ORG:kover-coverage-plugin:0.0.1")
+        classpath("com.github.YOUR_ORG:kover-coverage-plugin:0.0.2")
     }
 }
 ```
@@ -40,9 +41,9 @@ Apply the plugin in your init script and configure the extension:
 // .gradle/init.gradle.kts
 if (System.getenv("CI")?.toBoolean() == true) {
     rootProject {
-        pluginManager.apply(com.example.ci.kover.KoverCoveragePlugin::class.java)
+        pluginManager.apply(KoverCoveragePlugin::class.java)
 
-        extensions.findByType(com.example.ci.kover.KoverCoverageExtension::class.java)?.apply {
+        extensions.findByType(KoverCoverageExtension::class.java)?.apply {
             excludedProjects.set(setOf(
                 ":app_microbenchmark",
                 ":app_baseline",
@@ -56,7 +57,7 @@ if (System.getenv("CI")?.toBoolean() == true) {
 Then run:
 
 ```bash
-./gradlew koverAllModulesCoverageReport
+./gradlew koverAllModuleCoverage
 ```
 
 The summary report is written to `build/coverageAllModulesSummary.txt`.
@@ -79,20 +80,23 @@ Branch coverage: 61.05% (418/685)
 
 **Summary file** (`build/coverageAllModulesSummary.txt`):
 ```
-=== :lib_core ===
-Line coverage:   74.32% (1523/2049)
-Branch coverage: 61.05% (418/685)
+Kover coverage summary by module
+Sources: 2 module file(s)
 
-=== :lib_data ===
-Line coverage:   88.10% (742/842)
-Branch coverage: 79.31% (230/290)
+module    | coverage
+----------|----------
+:lib_data |   88.10%
+:lib_core |   74.32%
+
+Average (unweighted): 81.21%
 ```
+
+Modules are listed in descending order by line coverage percentage. The average is unweighted (mean of per-module percentages).
 
 ## CI example (GitLab)
 
 ```yaml
 kover_coverage_report:
-  extends: .analyse
   only:
     refs:
       - develop
@@ -100,7 +104,7 @@ kover_coverage_report:
     - git clone "$INIT_REPO_AUTH" .gradle-init
     - mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
     - cp .gradle-init/.gradle/init.gradle.kts "${GRADLE_USER_HOME:-$HOME/.gradle}/init.gradle.kts"
-    - ./gradlew koverAllModulesCoverageReport
+    - ./gradlew koverAllModuleCoverage
   artifacts:
     paths:
       - build/coverageAllModulesSummary.txt
@@ -109,4 +113,3 @@ kover_coverage_report:
 ## License
 
 MIT
-
