@@ -5,13 +5,14 @@ import com.tradingview.ci.kover.tasks.KoverModulesSummaryTask
 import com.tradingview.ci.kover.utils.toSafeModuleSegment
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import org.gradle.api.Task
 
 class KoverCoveragePlugin : Plugin<Project> {
 
     private companion object {
-        const val KOVER_XML_REPORT_CLASS = "kotlinx.kover.gradle.plugin.dsl.tasks.KoverXmlReport"
-        const val DEBUG_VARIANT = "debug"
+        const val KOVER_XML_TASK_PREFIX = "koverXmlReport"
+        const val KOVER_XML_DEBUG_TASK = "koverXmlReportDebug"
+        const val LIFECYCLE_TASK_NAME = "koverAllModuleCoverage"
+        const val SUMMARY_TASK_NAME = "koverAllModulesCoverageReport"
     }
 
     override fun apply(project: Project) {
@@ -24,43 +25,61 @@ class KoverCoveragePlugin : Plugin<Project> {
             excludedProjects.convention(emptySet())
         }
 
+        project.tasks.register(SUMMARY_TASK_NAME, KoverModulesSummaryTask::class.java)
+        project.tasks.register(LIFECYCLE_TASK_NAME)
+
         project.gradle.projectsEvaluated {
-            registerTasks(project, ext)
+            val perModuleProviders = discoverAndRegisterPerModuleTasks(project, ext)
+
+            val lifecycleTask = project.tasks.getByName(LIFECYCLE_TASK_NAME)
+            perModuleProviders.forEach { provider ->
+                lifecycleTask.dependsOn(provider.get())
+            }
+            lifecycleTask.finalizedBy(SUMMARY_TASK_NAME)
+
+            project.logger.lifecycle(
+                "Kover: lifecycle task deps count = ${lifecycleTask.dependsOn.size}"
+            )
+
+            val summaryTask = project.tasks.getByName(SUMMARY_TASK_NAME) as KoverModulesSummaryTask
+            summaryTask.mustRunAfter(perModuleProviders)
+            summaryTask.coverageDir.set(project.layout.buildDirectory)
+            summaryTask.moduleFilePrefix.set(ext.filePrefix.get())
+            summaryTask.outputFile.set(
+                project.layout.buildDirectory.file("coverageAllModulesSummary.txt")
+            )
+
+            project.logger.lifecycle(
+                "Kover coverage: registered ${perModuleProviders.size} per-module tasks"
+            )
         }
     }
 
-    private fun registerTasks(project: Project, ext: KoverCoverageExtension) {
-        val koverReportClass = resolveKoverReportClass(project) ?: run {
-            project.logger.warn("Kover plugin not found on project classpath, skipping coverage tasks")
-            return
-        }
-
-        val excluded = ext.excludedProjects.get()
-        val taskPrefix = ext.taskPrefix.get()
-        val filePrefix = ext.filePrefix.get()
-
-        val coverageProjects = project.subprojects
-            .map { it.path }
-            .filter { it !in excluded }
-            .sorted()
-
-        val perModuleProviders = coverageProjects.mapNotNull { projectPath ->
+    private fun discoverAndRegisterPerModuleTasks(
+        project: Project,
+        ext: KoverCoverageExtension,
+    ) = project.subprojects
+        .map { it.path }
+        .filter { it !in ext.excludedProjects.get() }
+        .sorted()
+        .mapNotNull { projectPath ->
             val subproject = project.project(projectPath)
 
-            val koverXmlTasks = subproject.tasks.matching { koverReportClass.isInstance(it) }
-            if (koverXmlTasks.isEmpty()) return@mapNotNull null
-
-            val selectedTask = selectDebugTask(koverXmlTasks) ?: return@mapNotNull null
+            val koverXmlTaskName = subproject.tasks.names
+                .filter { it.startsWith(KOVER_XML_TASK_PREFIX) }
+                .let { names ->
+                    names.find { it == KOVER_XML_DEBUG_TASK } ?: names.firstOrNull()
+                } ?: return@mapNotNull null
 
             val safe = projectPath.toSafeModuleSegment()
-            val fileName = filePrefix + safe + ".txt"
+            val fileName = ext.filePrefix.get() + safe + ".txt"
 
             project.tasks.register(
-                taskPrefix + safe,
+                ext.taskPrefix.get() + safe,
                 KoverCoverageTask::class.java
             ) {
                 reportFile.set(
-                    subproject.tasks.named(selectedTask.name).map { task ->
+                    subproject.tasks.named(koverXmlTaskName).map { task ->
                         project.layout.projectDirectory.file(
                             task.outputs.files.singleFile.absolutePath
                         )
@@ -69,48 +88,4 @@ class KoverCoveragePlugin : Plugin<Project> {
                 outputFile.set(project.layout.buildDirectory.file(fileName))
             }
         }
-
-        val summaryTask = project.tasks.register(
-            "koverAllModulesCoverageReport",
-            KoverModulesSummaryTask::class.java
-        ) {
-            mustRunAfter(perModuleProviders)
-            coverageDir.set(project.layout.buildDirectory)
-            moduleFilePrefix.set(filePrefix)
-            outputFile.set(
-                project.layout.buildDirectory.file("coverageAllModulesSummary.txt")
-            )
-        }
-
-        project.tasks.register("koverAllModuleCoverage") {
-            dependsOn(perModuleProviders)
-            finalizedBy(summaryTask)
-        }
-    }
-
-    private fun resolveKoverReportClass(project: Project): Class<*>? {
-        val classLoaders = (sequenceOf(project) + project.subprojects.asSequence())
-            .flatMap { it.plugins.asSequence() }
-            .map { it::class.java.classLoader }
-            .distinct()
-
-        return classLoaders.firstNotNullOfOrNull { classLoader ->
-            try {
-                classLoader.loadClass(KOVER_XML_REPORT_CLASS)
-            } catch (_: ClassNotFoundException) {
-                null
-            }
-        }
-    }
-
-    private fun selectDebugTask(tasks: Iterable<Task>): Task? {
-        val debugTask = tasks.firstOrNull { task ->
-            try {
-                task::class.java.getMethod("getVariantName").invoke(task) == DEBUG_VARIANT
-            } catch (_: ReflectiveOperationException) {
-                false
-            }
-        }
-        return debugTask ?: tasks.firstOrNull()
-    }
 }
