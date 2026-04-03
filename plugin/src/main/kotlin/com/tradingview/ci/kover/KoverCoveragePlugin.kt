@@ -70,25 +70,36 @@ class KoverCoveragePlugin : Plugin<Project> {
             }
         }
 
-        project.tasks.register(
+        val summaryTask = project.tasks.register(
             "koverAllModulesCoverageReport",
             KoverModulesSummaryTask::class.java
         ) {
-            perModuleProviders.forEach { provider ->
-                inputFiles.from(provider.flatMap { it.outputFile })
-            }
+            mustRunAfter(perModuleProviders)
+            coverageDir.set(project.layout.buildDirectory)
             moduleFilePrefix.set(filePrefix)
             outputFile.set(
                 project.layout.buildDirectory.file("coverageAllModulesSummary.txt")
             )
         }
+
+        project.tasks.register("koverAllModuleCoverage") {
+            dependsOn(perModuleProviders)
+            finalizedBy(summaryTask)
+        }
     }
 
     private fun resolveKoverReportClass(project: Project): Class<*>? {
-        return try {
-            project.buildscript.classLoader.loadClass(KOVER_XML_REPORT_CLASS)
-        } catch (e: ClassNotFoundException) {
-            null
+        val classLoaders = (sequenceOf(project) + project.subprojects.asSequence())
+            .flatMap { it.plugins.asSequence() }
+            .map { it::class.java.classLoader }
+            .distinct()
+
+        return classLoaders.firstNotNullOfOrNull { classLoader ->
+            try {
+                classLoader.loadClass(KOVER_XML_REPORT_CLASS)
+            } catch (_: ClassNotFoundException) {
+                null
+            }
         }
     }
 
@@ -96,7 +107,7 @@ class KoverCoveragePlugin : Plugin<Project> {
         val debugTask = tasks.firstOrNull { task ->
             try {
                 task::class.java.getMethod("getVariantName").invoke(task) == DEBUG_VARIANT
-            } catch (e: ReflectiveOperationException) {
+            } catch (_: ReflectiveOperationException) {
                 false
             }
         }

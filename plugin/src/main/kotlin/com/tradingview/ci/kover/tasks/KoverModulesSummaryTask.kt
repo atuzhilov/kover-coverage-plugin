@@ -1,11 +1,12 @@
 package com.tradingview.ci.kover.tasks
 
 import org.gradle.api.DefaultTask
-import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
@@ -13,9 +14,10 @@ import org.gradle.api.tasks.TaskAction
 
 abstract class KoverModulesSummaryTask : DefaultTask() {
 
-    @get:InputFiles
-    @get:PathSensitive(PathSensitivity.NONE)
-    abstract val inputFiles: ConfigurableFileCollection
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    @get:Optional
+    abstract val coverageDir: DirectoryProperty
 
     @get:Input
     abstract val moduleFilePrefix: Property<String>
@@ -26,11 +28,15 @@ abstract class KoverModulesSummaryTask : DefaultTask() {
     @TaskAction
     fun run() {
         val prefix = moduleFilePrefix.get()
+        val dir = coverageDir.get().asFile
+
+        val coverageFiles = dir.listFiles { file ->
+            file.isFile && file.name.startsWith(prefix) && file.extension == "txt"
+        }?.sortedBy { it.name } ?: emptyList()
+
         val sb = StringBuilder()
 
-        val sortedFiles = inputFiles.files.sortedBy { it.name }
-        for (file in sortedFiles) {
-            if (!file.exists()) return@run
+        for (file in coverageFiles) {
             val moduleName = file.nameWithoutExtension
                 .removePrefix(prefix)
                 .replace("_dash_", "-")
@@ -43,11 +49,16 @@ abstract class KoverModulesSummaryTask : DefaultTask() {
             sb.appendLine()
         }
 
+        if (coverageFiles.isEmpty()) {
+            sb.appendLine("No per-module coverage files found in ${dir.absolutePath}")
+        }
+
         val out = outputFile.get().asFile
         out.parentFile?.mkdirs()
         out.writeText(sb.toString())
 
-        logger.lifecycle("Coverage summary written to ${out.absolutePath}")
+        logger.lifecycle(
+            "Coverage summary: ${coverageFiles.size} modules written to ${out.absolutePath}"
+        )
     }
 }
-
