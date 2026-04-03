@@ -40,9 +40,9 @@ Apply the plugin in your init script and configure the extension:
 // .gradle/init.gradle.kts
 if (System.getenv("CI")?.toBoolean() == true) {
     rootProject {
-        pluginManager.apply(com.tradingview.ci.kover.KoverCoveragePlugin::class.java)
+        pluginManager.apply(com.example.ci.kover.KoverCoveragePlugin::class.java)
 
-        extensions.findByType(com.tradingview.ci.kover.KoverCoverageExtension::class.java)?.apply {
+        extensions.findByType(com.example.ci.kover.KoverCoverageExtension::class.java)?.apply {
             excludedProjects.set(setOf(
                 ":app_microbenchmark",
                 ":app_baseline",
