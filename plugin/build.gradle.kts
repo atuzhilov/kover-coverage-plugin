@@ -16,9 +16,6 @@ gradlePlugin {
     }
 }
 
-val koverVersion: String = libs.versions.kover.plugin.get()
-
 dependencies {
     implementation(gradleApi())
-    compileOnly("org.jetbrains.kotlinx:kover-gradle-plugin:$koverVersion")
 }

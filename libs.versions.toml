@@ -1,6 +1,5 @@
 [versions]
-kover-coverage = "0.0.1"
-kover-plugin = "0.9.1"
+kover-coverage = "0.0.2"
 
 [plugins]
 publish-plugin = { id = "com.gradle.plugin-publish", version = "1.1.0" }

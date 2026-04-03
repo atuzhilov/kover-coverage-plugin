@@ -3,11 +3,16 @@ package com.tradingview.ci.kover
 import com.tradingview.ci.kover.tasks.KoverCoverageTask
 import com.tradingview.ci.kover.tasks.KoverModulesSummaryTask
 import com.tradingview.ci.kover.utils.toSafeModuleSegment
-import kotlinx.kover.gradle.plugin.dsl.tasks.KoverXmlReport
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.Task
 
 class KoverCoveragePlugin : Plugin<Project> {
+
+    private companion object {
+        const val KOVER_XML_REPORT_CLASS = "kotlinx.kover.gradle.plugin.dsl.tasks.KoverXmlReport"
+        const val DEBUG_VARIANT = "debug"
+    }
 
     override fun apply(project: Project) {
         val ext = project.extensions.create(
@@ -19,12 +24,17 @@ class KoverCoveragePlugin : Plugin<Project> {
             excludedProjects.convention(emptySet())
         }
 
-        project.afterEvaluate {
+        project.gradle.projectsEvaluated {
             registerTasks(project, ext)
         }
     }
 
     private fun registerTasks(project: Project, ext: KoverCoverageExtension) {
+        val koverReportClass = resolveKoverReportClass(project) ?: run {
+            project.logger.warn("Kover plugin not found on project classpath, skipping coverage tasks")
+            return
+        }
+
         val excluded = ext.excludedProjects.get()
         val taskPrefix = ext.taskPrefix.get()
         val filePrefix = ext.filePrefix.get()
@@ -35,9 +45,12 @@ class KoverCoveragePlugin : Plugin<Project> {
             .sorted()
 
         val perModuleProviders = coverageProjects.mapNotNull { projectPath ->
-            val koverXmlTasks = project.project(projectPath).tasks
-                .withType(KoverXmlReport::class.java)
+            val subproject = project.project(projectPath)
+
+            val koverXmlTasks = subproject.tasks.matching { koverReportClass.isInstance(it) }
             if (koverXmlTasks.isEmpty()) return@mapNotNull null
+
+            val selectedTask = selectDebugTask(koverXmlTasks) ?: return@mapNotNull null
 
             val safe = projectPath.toSafeModuleSegment()
             val fileName = filePrefix + safe + ".txt"
@@ -46,12 +59,8 @@ class KoverCoveragePlugin : Plugin<Project> {
                 taskPrefix + safe,
                 KoverCoverageTask::class.java
             ) {
-                val debugTasks = koverXmlTasks.matching { it.variantName == "debug" }
-                val selected = if (debugTasks.isNotEmpty())
-                    debugTasks.first() else koverXmlTasks.first()
-
                 reportFile.set(
-                    koverXmlTasks.named(selected.name).map { task ->
+                    subproject.tasks.named(selectedTask.name).map { task ->
                         project.layout.projectDirectory.file(
                             task.outputs.files.singleFile.absolutePath
                         )
@@ -74,5 +83,23 @@ class KoverCoveragePlugin : Plugin<Project> {
             )
         }
     }
-}
 
+    private fun resolveKoverReportClass(project: Project): Class<*>? {
+        return try {
+            project.buildscript.classLoader.loadClass(KOVER_XML_REPORT_CLASS)
+        } catch (e: ClassNotFoundException) {
+            null
+        }
+    }
+
+    private fun selectDebugTask(tasks: Iterable<Task>): Task? {
+        val debugTask = tasks.firstOrNull { task ->
+            try {
+                task::class.java.getMethod("getVariantName").invoke(task) == DEBUG_VARIANT
+            } catch (e: ReflectiveOperationException) {
+                false
+            }
+        }
+        return debugTask ?: tasks.firstOrNull()
+    }
+}
