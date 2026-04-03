@@ -9,7 +9,6 @@ import org.gradle.api.Project
 class KoverCoveragePlugin : Plugin<Project> {
 
     private companion object {
-        const val KOVER_XML_TASK_PREFIX = "koverXmlReport"
         const val KOVER_XML_DEBUG_TASK = "koverXmlReportDebug"
         const val LIFECYCLE_TASK_NAME = "koverAllModuleCoverage"
         const val SUMMARY_TASK_NAME = "koverAllModulesCoverageReport"
@@ -25,61 +24,49 @@ class KoverCoveragePlugin : Plugin<Project> {
             excludedProjects.convention(emptySet())
         }
 
-        project.tasks.register(SUMMARY_TASK_NAME, KoverModulesSummaryTask::class.java)
-        project.tasks.register(LIFECYCLE_TASK_NAME)
+        val taskPrefix = ext.taskPrefix.get()
+        val filePrefix = ext.filePrefix.get()
 
-        project.gradle.projectsEvaluated {
-            val perModuleProviders = discoverAndRegisterPerModuleTasks(project, ext)
-
-            val lifecycleTask = project.tasks.getByName(LIFECYCLE_TASK_NAME)
-            perModuleProviders.forEach { provider ->
-                lifecycleTask.dependsOn(provider.get())
-            }
-            lifecycleTask.finalizedBy(SUMMARY_TASK_NAME)
-
-            project.logger.lifecycle(
-                "Kover: lifecycle task deps count = ${lifecycleTask.dependsOn.size}"
-            )
-
-            val summaryTask = project.tasks.getByName(SUMMARY_TASK_NAME) as KoverModulesSummaryTask
-            summaryTask.mustRunAfter(perModuleProviders)
-            summaryTask.coverageDir.set(project.layout.buildDirectory)
-            summaryTask.moduleFilePrefix.set(ext.filePrefix.get())
-            summaryTask.outputFile.set(
+        val summaryTask = project.tasks.register(
+            SUMMARY_TASK_NAME,
+            KoverModulesSummaryTask::class.java
+        ) {
+            coverageDir.set(project.layout.buildDirectory)
+            moduleFilePrefix.set(filePrefix)
+            outputFile.set(
                 project.layout.buildDirectory.file("coverageAllModulesSummary.txt")
             )
-
-            project.logger.lifecycle(
-                "Kover coverage: registered ${perModuleProviders.size} per-module tasks"
-            )
         }
-    }
 
-    private fun discoverAndRegisterPerModuleTasks(
-        project: Project,
-        ext: KoverCoverageExtension,
-    ) = project.subprojects
-        .map { it.path }
-        .filter { it !in ext.excludedProjects.get() }
-        .sorted()
-        .mapNotNull { projectPath ->
-            val subproject = project.project(projectPath)
+        val lifecycleTask = project.tasks.register(LIFECYCLE_TASK_NAME) {
+            finalizedBy(summaryTask)
+        }
 
-            val koverXmlTaskName = subproject.tasks.names
-                .filter { it.startsWith(KOVER_XML_TASK_PREFIX) }
-                .let { names ->
-                    names.find { it == KOVER_XML_DEBUG_TASK } ?: names.firstOrNull()
-                } ?: return@mapNotNull null
+        project.subprojects.forEach { subproject ->
+            val safe = subproject.path.toSafeModuleSegment()
+            val perModuleTaskName = taskPrefix + safe
+            val fileName = filePrefix + safe + ".txt"
 
-            val safe = projectPath.toSafeModuleSegment()
-            val fileName = ext.filePrefix.get() + safe + ".txt"
-
-            project.tasks.register(
-                ext.taskPrefix.get() + safe,
+            val perModuleTask = project.tasks.register(
+                perModuleTaskName,
                 KoverCoverageTask::class.java
             ) {
+
+                if (subproject.path in ext.excludedProjects.get()) {
+                    enabled = false
+                    return@register
+                }
+
+                val koverXmlTasks = subproject.tasks.matching {
+                    it.name == KOVER_XML_DEBUG_TASK
+                }
+                if (koverXmlTasks.isEmpty()) {
+                    enabled = false
+                    return@register
+                }
+
                 reportFile.set(
-                    subproject.tasks.named(koverXmlTaskName).map { task ->
+                    subproject.tasks.named(KOVER_XML_DEBUG_TASK).map { task ->
                         project.layout.projectDirectory.file(
                             task.outputs.files.singleFile.absolutePath
                         )
@@ -87,5 +74,8 @@ class KoverCoveragePlugin : Plugin<Project> {
                 )
                 outputFile.set(project.layout.buildDirectory.file(fileName))
             }
+
+            lifecycleTask.configure { dependsOn(perModuleTask) }
         }
+    }
 }
