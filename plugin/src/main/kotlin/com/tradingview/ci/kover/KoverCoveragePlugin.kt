@@ -31,7 +31,6 @@ class KoverCoveragePlugin : Plugin<Project> {
             SUMMARY_TASK_NAME,
             KoverModulesSummaryTask::class.java
         ) {
-            coverageDir.set(project.layout.buildDirectory)
             moduleFilePrefix.set(filePrefix)
             outputFile.set(
                 project.layout.buildDirectory.file("coverageAllModulesSummary.txt")
@@ -76,6 +75,9 @@ class KoverCoveragePlugin : Plugin<Project> {
             }
 
             lifecycleTask.configure { dependsOn(perModuleTask) }
+            summaryTask.configure {
+                inputFiles.from(perModuleTask.flatMap { it.outputFile })
+            }
         }
     }
 }

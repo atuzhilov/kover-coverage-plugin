@@ -1,11 +1,11 @@
 package com.tradingview.ci.kover.tasks
 
 import org.gradle.api.DefaultTask
-import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
@@ -13,13 +13,12 @@ import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import java.io.File
 
-
 abstract class KoverModulesSummaryTask : DefaultTask() {
 
-    @get:InputDirectory
-    @get:PathSensitive(PathSensitivity.RELATIVE)
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NONE)
     @get:Optional
-    abstract val coverageDir: DirectoryProperty
+    abstract val inputFiles: ConfigurableFileCollection
 
     @get:Input
     abstract val moduleFilePrefix: Property<String>
@@ -30,10 +29,9 @@ abstract class KoverModulesSummaryTask : DefaultTask() {
     @TaskAction
     fun generate() {
         val prefix = moduleFilePrefix.get()
-        val dir = coverageDir.get().asFile
 
-        val files = (dir.listFiles() ?: emptyArray())
-            .filter { it.isFile && it.name.startsWith(prefix) && it.extension == "txt" }
+        val files = inputFiles.files
+            .filter { it.exists() && it.isFile }
             .sortedBy { it.name }
 
         val rows = files.mapNotNull { file ->
